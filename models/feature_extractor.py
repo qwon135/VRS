@@ -27,5 +27,6 @@ class CT25D(nn.Module):
 
         img_feats = self.lstm(img_feats)
         img_feats = img_feats.mean(1)        
+        img_feats = self.proj(img_feats)
         return img_feats
     
