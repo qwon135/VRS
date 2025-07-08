@@ -62,71 +62,24 @@ def get_transform(IMG_SIZE):
             })
     return train_transform, valid_transform
 
-def trainer(model, optimizer, criterion,  criterion_cox, ema, train_loader, device, epoch):
-    train_loss = 0.0
-    model.train()
+class ContrastiveLoss(torch.nn.Module):
 
-    for img, label in train_loader:
-        OS, dead = label                
-        OS, dead = OS.to(device), dead.to(device)        
+    def __init__(self, margin=1.0):
+        super(ContrastiveLoss, self).__init__()
+        self.margin = margin
 
-        img = img.to(device)
-        optimizer.zero_grad()
-        pred_os = model(img).squeeze(-1)        
-        
-        dead_cox_loss = criterion_cox(pred_os, OS, dead) /img.shape[0]
-        loss = dead_cox_loss
-        train_loss += loss.item()
+    def forward(self, output1, output2, label):
+        euclidean_distance = F.pairwise_distance(output1, output2, keepdim = True)
+        loss_contrastive = torch.mean((1-label) * torch.pow(euclidean_distance, 2) +
+                                      (label) * torch.pow(torch.clamp(self.margin - euclidean_distance, min=0.0), 2))
 
-        loss.backward()
-        grad_=torch.nn.utils.clip_grad_norm_(model.parameters(), 50)
-
-        optimizer.step()
-        ema.update()    
-
-    train_loss /=len(train_loader)    
-    return train_loss
-
-def validator(model, scheduler, criterion,  criterion_cox, valid_loader, device):
-    valid_loss = 0.0    
-    model.eval()
-    valid_risk_score = []
-
-    for img, label in valid_loader:
-        OS, dead = label                
-        OS, dead = OS.to(device), dead.to(device)
-        img = img.to(device)
-
-        with torch.no_grad():
-            pred_os = model(img).squeeze(-1)                        
-            dead_cox_loss = criterion_cox(pred_os, OS, dead) /img.shape[0]
-                    
-        loss = dead_cox_loss        
-        valid_risk_score += pred_os.cpu().tolist()        
-        
-        valid_loss += loss.item()
-        
-
-    valid_loss /= len(valid_loader)        
-
-    scheduler.step()
-    return valid_risk_score, valid_loss
-
-def get_loader(df, tform):
-    class_w = 1 / np.bincount(df['dead'])
-    cw = [class_w[int(i)] for i in df['dead'].tolist()]
-    dset = CustomDataset(df, transform=tform, mode='test')
-    sampler = WeightedRandomSampler(weights=cw, num_samples=len(dset))#(dset, df['dead'].values, args.batch_size)
-    loader = DataLoader(dset,
-                                sampler=sampler,
-                                batch_size=args.batch_size,  drop_last=False , shuffle=False, num_workers = args.num_workers)
-    return loader
+        return loss_contrastive
 
 def main(args):
     model = CT25D().to(args.device)
 
-    df = pd.read_csv('hypofractionated_radiotherapy.csv', index_col=None)
-    loss_fn = nn.BCEWithLogitsLoss()
+    df = pd.read_csv('...', index_col=None)
+    CL_loss_fn = ContrastiveLoss()
 
     param_groups = [
         {'params': [], 'lr':  args.cnn_lr, 'weight_decay' : args.weight_decay},
@@ -144,28 +97,32 @@ def main(args):
     optimizer = torch.optim.AdamW(param_groups, weight_decay=args.weight_decay)
     ema = ExponentialMovingAverage(model.parameters(), decay=args.ema_decay)
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max =10, eta_min= 1e-7)
-    best_loss = 1e6
+    device = args.device
+    train_transform, valid_transform = get_transform(224, 224)
 
-    train_df, valid_df = train_test_split(df, stratify=df['relapse'].astype(str), test_size=0.2, random_state=args.seed)
-    train_df, valid_df = train_df.reset_index(drop=True), valid_df.reset_index(drop=True)
-    
-    loss_fn_cox = cox_ph_loss_sorted
-    train_transform, valid_transform = get_transform([args.IMG_SIZE, args.IMG_SIZE])
+    for epoch in range(args.epochs):            
+        df_for_CL = pd.DataFrame({'num1' : df.sample(frac=1).index, 'num2' : df.sample(frac=1).index})
 
-    train_loader = get_loader(train_df, train_transform)
-    valid_loader = get_loader(valid_df, valid_transform)
+        CL_dataset = CustomDataset(df=df, df_for_CL=df_for_CL, transform=train_transform, mode='train', args=args)
+        CL_loader = DataLoader(dataset=CL_dataset, batch_size=16, num_workers=16, shuffle=False)        
 
-    for epoch in range(args.epochs):
-        train_cox_loss = trainer(model, optimizer, loss_fn, loss_fn_cox, ema, train_loader, args.device, epoch)     
-        valid_risk_score, valid_loss = validator(model, scheduler, loss_fn, loss_fn_cox, valid_loader, args.device)    
+        train_loss = 0
+        for images1, images2, label in CL_loader:
 
-        print(f'EPOCH : {epoch} | t_loss : {train_cox_loss:.4f} | v_loss : {valid_loss:.4f}')
+            images1, images2, label = images1.to(device), images2.to(device), label.to(device)
+            feature1, feature2 = model(images1.to(device)), model(images2.to(device))
+            loss = CL_loss_fn(feature1, feature2, label)
+            
+            optimizer.zero_grad()
+            loss.backward()
+            # grad_=torch.nn.utils.clip_grad_norm_(model.parameters(), 50)
+            optimizer.step()
+            ema.update()    
 
-        if valid_loss < best_loss:
-            print(f'EPOCH : {epoch} is best loss!!')
-            torch.save(model.state_dict(), f'ckpt/best_RT.pt')
-            best_loss = valid_loss
-            print()
+            train_loss += loss
+        train_loss /= len(CL_loader)
+        scheduler.step()
+        torch.save(model.state_dict(), f'ckpt/weight_epoch{epoch}.pt')
 
 
 def get_args():
