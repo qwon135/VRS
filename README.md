@@ -1,6 +1,7 @@
 # Deep‑Learning Vascular Risk Score (VRS) for ICI Response in NSCLC
 ---
 This repository provides code to compute a Deep Learning-based Vascular Remodeling Score (VRS) from CT images, designed to predict ICI response in NSCLC patients.
+![VRS Visualization](img.jpg)
 
 ## 1. Repository layout
 
