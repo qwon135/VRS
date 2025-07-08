@@ -16,10 +16,6 @@ class CT25D(nn.Module):
             nn.Linear(self.hidden_dim, self.hidden_dim//2),
             nn.ReLU(),
             nn.Linear(self.hidden_dim//2, 128),  
-            nn.ReLU(),
-            nn.Linear(128, 64),  
-            nn.ReLU(),
-            nn.Linear(64, 32),  
             )
 
 
