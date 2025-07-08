@@ -41,11 +41,6 @@ python preprocessing/extract_tumor_mask.py
 python preprocessing/extract_tumor_vessel_image.py 
 ```
 
-## 4. Pre‑trained weights
-
-https://drive.google.com/drive/u/1/folders/1gSTiDxmhaHNIhbQSjmkmTJ5ogIFftvpw
-
-
-## 5. inference VRS score
+## 4. inference VRS score
 
 View `VRS.ipynb``
